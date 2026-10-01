@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>答案を送る</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="答案を送る">
+<meta name="theme-color" content="#2b6cb0">
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#1a202c;--sub:#5a6577;--line:#d8dee8;--acc:#2b6cb0;--acc2:#e8f0fa;--ok:#2f855a;--ng:#c53030}
+@media (prefers-color-scheme:dark){:root{--bg:#12161c;--card:#1d232c;--ink:#e6eaf0;--sub:#9aa5b5;--line:#2e3644;--acc:#5a9be0;--acc2:#1e2c3e;--ok:#5fbf8a;--ng:#f07171}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;-webkit-text-size-adjust:100%}
+body{padding:0 0 calc(env(safe-area-inset-bottom) + 150px)}
+header{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 8px) 16px 8px;background:var(--acc);color:#fff}
+header h1{font-size:17px;margin:0;flex:1}
+header button{background:none;border:0;color:#fff;font-size:20px;width:44px;height:36px}
+#st{margin:12px 16px 0;padding:10px 12px;border-radius:10px;background:var(--acc2);font-size:14px;color:var(--sub);display:flex;gap:8px;align-items:center}
+#st b{color:var(--ink)}
+#st .x{margin-left:auto;background:none;border:0;color:var(--acc);font-size:18px;width:36px;height:32px}
+#grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 16px}
+.ph{position:relative;aspect-ratio:3/4;border-radius:8px;overflow:hidden;background:var(--card);border:1px solid var(--line)}
+.ph img{width:100%;height:100%;object-fit:cover;display:block}
+.ph button{position:absolute;top:4px;right:4px;width:30px;height:30px;border-radius:50%;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:16px;line-height:30px;padding:0}
+.ph .n{position:absolute;left:4px;bottom:4px;font-size:12px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:1px 6px}
+.ph.sent{outline:3px solid var(--ok)}
+.ph.fail{outline:3px solid var(--ng)}
+#msg{margin:8px 16px;font-size:14px;min-height:20px}
+#msg.ok{color:var(--ok)}#msg.ng{color:var(--ng)}
+.bar{position:fixed;left:0;right:0;bottom:0;padding:10px 16px calc(env(safe-area-inset-bottom) + 10px);background:var(--card);border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.bar label,.bar button{display:flex;align-items:center;justify-content:center;gap:6px;height:48px;border-radius:12px;font-size:16px;font-weight:600;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.bar input{display:none}
+#send{grid-column:1/3;height:56px;background:var(--acc);border-color:var(--acc);color:#fff;font-size:17px}
+#send:disabled{opacity:.45}
+</style>
+</head>
+<body>
+<header><h1>答案を送る</h1><button id="set" aria-label="設定">⚙</button></header>
+<div id="st"><span id="stTx">…</span><button class="x" id="re" aria-label="更新">↻</button></div>
+<div id="grid"></div>
+<div id="msg"></div>
+<div class="bar">
+  <label>📷 撮る<input id="cam" type="file" accept="image/*" capture="environment"></label>
+  <label>🖼 選ぶ<input id="pick" type="file" accept="image/*" multiple></label>
+  <button id="send" disabled>パソコンへ送信</button>
+</div>
+<script>
+(()=>{
+// 写真は GitHub の非公開リポジトリ photo-inbox の inbox/ に置き、PC の「受け取る」が取りに来る
+// トークンは買い物アプリのバックアップと同じキー（同じサイトなので共有）。対象に photo-inbox を足して使う
+const GH={owner:'ageargfbv',repo:'photo-inbox',tokKey:'backup-gh-token'};
+const MAX=2600,Q=.85;   // 答案の文字が読める大きさ（今までの答案画像は長辺2576px・約1.1MB）
+const $=id=>document.getElementById(id);
+const tok=()=>{try{return localStorage.getItem(GH.tokKey)||''}catch(e){return ''}};
+const api=(method,path,body)=>fetch('https://api.github.com/repos/'+GH.owner+'/'+GH.repo+path,{method,cache:'no-store',
+  headers:{'Authorization':'Bearer '+tok(),'Accept':'application/vnd.github+json','Content-Type':'application/json'},
+  body:body?JSON.stringify(body):undefined});
+const errTx=s=>s===401||s===403?'トークンを確認してください（'+s+'）':s===404?'トークンの対象に photo-inbox が入っていません（404）':s?'送れませんでした（'+s+'）':'通信できませんでした';
+
+// ---- 送る前の写真（IndexedDB。アプリを閉じても残る） ----
+let dbp;
+function idb(){return dbp||(dbp=new Promise((ok,ng)=>{const r=indexedDB.open('send-to-pc',1);r.onupgradeneeded=()=>r.result.createObjectStore('q',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error)}))}
+async function tx(mode,fn){const db=await idb();return new Promise((ok,ng)=>{const t=db.transaction('q',mode);const rq=fn(t.objectStore('q'));t.oncomplete=()=>ok(rq&&rq.result);t.onerror=()=>ng(t.error)})}
+const qAll=()=>tx('readonly',s=>s.getAll()).then(a=>(a||[]).sort((x,y)=>x.id-y.id));
+const qPut=o=>tx('readwrite',s=>s.put(o));
+const qDel=id=>tx('readwrite',s=>s.delete(id));
+
+function shrink(file){return new Promise((ok,ng)=>{
+  const u=URL.createObjectURL(file),im=new Image();
+  im.onload=()=>{const k=Math.min(1,MAX/Math.max(im.width,im.height));const c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?ok(b):ng(new Error('blob')),'image/jpeg',Q)};
+  im.onerror=()=>{URL.revokeObjectURL(u);ng(new Error('img'))};im.src=u})}
+const pad=n=>String(n).padStart(2,'0');
+const stamp=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());
+let seq=0;
+
+let items=[],urls={};
+function msg(t,cls){const m=$('msg');m.textContent=t||'';m.className=cls||''}
+async function render(){
+  try{items=await qAll()}catch(e){items=[]}
+  const g=$('grid');g.innerHTML='';
+  const live={};
+  items.forEach((it,i)=>{
+    const u=urls[it.id]||URL.createObjectURL(it.blob);live[it.id]=u;
+    const d=document.createElement('div');d.className='ph'+(it.fail?' fail':'');
+    d.innerHTML='<img alt=""><span class="n">'+(i+1)+'</span><button aria-label="外す">×</button>';
+    d.querySelector('img').src=u;
+    d.querySelector('button').onclick=async()=>{if(!confirm((i+1)+'枚目を外しますか？'))return;await qDel(it.id);render()};
+    g.appendChild(d);
+  });
+  Object.keys(urls).forEach(k=>{if(!live[k])URL.revokeObjectURL(urls[k])});urls=live;
+  const b=$('send');b.disabled=!items.length||busy;b.textContent=items.length?'パソコンへ送信（'+items.length+'枚）':'パソコンへ送信';
+}
+async function add(files){
+  for(const f of files){
+    try{const blob=await shrink(f),s=++seq;await qPut({id:Date.now()*100+s%100,name:stamp(new Date())+'_'+s,blob})}
+    catch(e){msg('読み込めない写真がありました','ng')}
+  }
+  render();
+}
+$('cam').onchange=e=>{add([...e.target.files]);e.target.value=''};
+$('pick').onchange=e=>{add([...e.target.files]);e.target.value=''};
+
+const b64=blob=>new Promise((ok,ng)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=()=>ng(r.error);r.readAsDataURL(blob)});
+let busy=false;
+async function send(){
+  if(busy)return;
+  if(!tok()){setup();return}
+  busy=true;render();
+  let ok=0,last=0;const all=items.slice();
+  try{
+    for(let i=0;i<all.length;i++){
+      const it=all[i];msg('送信中… '+(i+1)+' / '+all.length);
+      const content=await b64(it.blob);
+      let name=it.name,r;
+      for(let t=0;t<4;t++){
+        r=await api('PUT','/contents/inbox/'+encodeURIComponent(name)+'.jpg',{message:'写真 '+name,content});
+        if(r.ok)break;
+        if(r.status===422){name=it.name+'_'+(t+2);continue}            // 同じ名前がもう届いている
+        if(r.status===409){await new Promise(z=>setTimeout(z,800));continue}   // 同時に書き込みがあった
+        break;
+      }
+      if(r.ok){await qDel(it.id);ok++}else{last=r.status;it.fail=1;await qPut(it);break}
+    }
+  }catch(e){last=0}
+  busy=false;
+  if(ok===all.length)msg('送りました（'+ok+'枚）','ok');
+  else msg((ok?ok+'枚送りました。':'')+'残り'+(all.length-ok)+'枚は'+errTx(last),'ng');
+  await render();status();
+}
+$('send').onclick=send;
+
+// ---- PC がまだ受け取っていない枚数・最後に受け取った時刻 ----
+const fmt=t=>new Date(t).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+async function status(){
+  const el=$('stTx');
+  if(!tok()){el.textContent='GitHub のトークンが未設定';return}
+  try{
+    const [a,b]=await Promise.all([api('GET','/contents/inbox?t='+Date.now()),api('GET','/contents/received.json?t='+Date.now())]);
+    if(!a.ok&&a.status!==404){el.textContent=errTx(a.status);return}
+    const n=a.ok?(await a.json()).filter(f=>/\.jpg$/i.test(f.name)).length:0;
+    let at='';if(b.ok){try{const j=JSON.parse(decodeURIComponent(escape(atob((await b.json()).content.replace(/\s/g,'')))));at=j.at}catch(e){}}
+    el.innerHTML='PC 未受け取り <b>'+n+'枚</b>'+(at?' · 最後の受け取り '+fmt(at):'');
+  }catch(e){el.textContent='通信できませんでした'}
+}
+$('re').onclick=status;
+
+async function setup(){
+  const SET='（設定済み）';
+  const v=prompt('GitHubのトークン（空にすると削除）',tok()?SET:'');
+  if(v===null)return;
+  const t=v.trim();if(t===SET)return;
+  try{if(t)localStorage.setItem(GH.tokKey,t);else localStorage.removeItem(GH.tokKey)}catch(e){}
+  status();
+}
+$('set').onclick=setup;
+
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)status()});
+render();status();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
