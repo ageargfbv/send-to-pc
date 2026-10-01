@@ -51,8 +51,8 @@ header button{background:none;border:0;color:#fff;font-size:20px;width:44px;heig
 <script>
 (()=>{
 // 写真は GitHub の非公開リポジトリ photo-inbox の inbox/ に置き、PC の「受け取る」が取りに来る
-// トークンは買い物アプリのバックアップと同じキー（同じサイトなので共有）。対象に photo-inbox を足して使う
-const GH={owner:'ageargfbv',repo:'photo-inbox',tokKey:'backup-gh-token'};
+// トークンはこのアプリ専用（対象＝photo-inbox だけ）。買い物アプリのバックアップ（backup-gh-token）とは別のキー
+const GH={owner:'ageargfbv',repo:'photo-inbox',tokKey:'send-to-pc-token'};
 const MAX=2600,Q=.85;   // 答案の文字が読める大きさ（今までの答案画像は長辺2576px・約1.1MB）
 const $=id=>document.getElementById(id);
 const tok=()=>{try{return localStorage.getItem(GH.tokKey)||''}catch(e){return ''}};
